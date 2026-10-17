@@ -45,6 +45,20 @@ const programa = {
 if (!programa.nombre) { console.error("Falta el nombre del programa (Programa!B2)."); process.exit(1); }
 const PREF = slug(programa.nombre);
 
+const normalizar = (t) => t.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[\s_-]+/g, "");
+const archivos = [];
+(function recorrer(dir) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const ruta = path.join(dir, e.name);
+    if (e.isDirectory()) recorrer(ruta); else archivos.push(ruta);
+  }
+})(args.carpeta);
+function buscar(num, ext) {
+  const clave = normalizar(`modulo ${num}`);
+  const hallados = archivos.filter((f) => path.extname(f).toLowerCase() === ext && normalizar(path.basename(f, path.extname(f))) === clave);
+  return hallados.length ? path.relative(args.carpeta, hallados[0]) : null;
+}
+
 const modulos = [];
 hm.eachRow((row, n) => {
   if (n < 3) return;
@@ -56,8 +70,8 @@ hm.eachRow((row, n) => {
     duracion_min: Number(texto(row.getCell(3))) || null,
     intro: texto(row.getCell(4)),
     pdf_nombre: texto(row.getCell(5)) || `Material · Módulo ${num}`,
-    video: `Modulo_${String(num).padStart(2, "0")}/video.mp4`,
-    pdf: `Modulo_${String(num).padStart(2, "0")}/material.pdf`,
+    video: buscar(num, ".mp4"),
+    pdf: buscar(num, ".pdf"),
   });
 });
 
@@ -89,7 +103,8 @@ for (const [codigo, lista] of preguntas) {
 for (const m of modulos) {
   const codigo = `M${String(m.num).padStart(2, "0")}`;
   if (!preguntas.get(codigo)?.length) errores.push(`Módulo ${m.num}: sin preguntas de evaluación (${codigo})`);
-  for (const f of [m.video, m.pdf]) if (!fs.existsSync(path.join(args.carpeta, f))) errores.push(`Falta el archivo ${f}`);
+  if (!m.video) errores.push(`Falta el video del módulo ${m.num} (se espera «MODULO ${m.num}.mp4»)`);
+  if (!m.pdf) errores.push(`Falta el PDF del módulo ${m.num} (se espera «MODULO ${m.num}.pdf»)`);
 }
 
 console.log(`Programa: ${programa.nombre}`);
@@ -150,7 +165,9 @@ try {
     await con.query("INSERT INTO programas (id, nombre, objetivo, base_cuestionario_id, estado) VALUES (?, ?, ?, ?, 'Borrador')",
       [progId, programa.nombre, programa.objetivo, baseId]);
 
+    let posicion = 0;
     for (const m of modulos) {
+      posicion += 1;
       const n = String(m.num).padStart(2, "0");
       console.log(`Módulo ${n} · ${m.titulo}`);
       const evalId = await crearCuestionario(con, `${PREF}-M${n}`, `Evaluación · Módulo ${m.num}: ${m.titulo}`, "modulo", preguntas.get(`M${n}`));
@@ -158,7 +175,7 @@ try {
       const pdf_path = subir(m.pdf, `${carpetaStorage}/modulo-${n}/material.pdf`);
       await con.query(
         "INSERT INTO modulos (id, programa_id, orden, titulo, duracion_min, intro, video_path, pdf_path, pdf_nombre, evaluacion_id) VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [progId, m.num, m.titulo, m.duracion_min, m.intro, video_path, pdf_path, m.pdf_nombre, evalId]);
+        [progId, posicion, m.titulo, m.duracion_min, m.intro, video_path, pdf_path, m.pdf_nombre, evalId]);
     }
   });
 } catch (e) {
